@@ -1,20 +1,19 @@
 # depenemy-action
 
-GitHub Action for [depenemy](https://github.com/W3OSC/depenemy) — scans your dependencies for supply chain risks, behavioral issues, and reputation red flags.
+GitHub Action for [depenemy](https://github.com/W3OSC/depenemy) — scans your dependencies for supply chain risks, reputation red flags, and behavioral issues.
 
-Results appear automatically in your **Security → Code Scanning** tab on every push and pull request.
+Results appear automatically in your **Security > Code Scanning** tab on every push and pull request.
 
 ---
 
-## Usage
-
-Create `.github/workflows/supply-chain.yml` in your repository:
+## Quick start
 
 ```yaml
+# .github/workflows/supply-chain.yml
 name: Supply Chain Security
 on:
   pull_request:
-    paths: ["package.json", "package-lock.json", "**/package.json"]
+    paths: ["package.json", "package-lock.json", "**/package.json", "**/package-lock.json"]
   push:
     branches: [main, master]
 
@@ -27,15 +26,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Run depenemy
         id: scan
         uses: W3OSC/depenemy-action@v1
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fail-on: error
           approved-registries: "registry.npmjs.org"
-
+          fail-on: error
+          token: ${{ secrets.GITHUB_TOKEN }}
       - name: Upload SARIF
         if: always()
         uses: github/codeql-action/upload-sarif@v3
@@ -44,20 +41,48 @@ jobs:
           category: depenemy
 ```
 
+> **Note:** `upload-sarif` defaults to `false` — GitHub Advanced Security (GHAS) is required for SARIF upload. Use the explicit `github/codeql-action/upload-sarif` step above, or set `upload-sarif: 'true'` if GHAS is enabled on your repo.
+
+---
+
+## Action variants
+
+### Composite action (default) — any runner
+
+```yaml
+- uses: W3OSC/depenemy-action@v1
+  with:
+    approved-registries: "registry.npmjs.org"
+    fail-on: error
+```
+
+Installs depenemy from PyPI at runtime. Works on Linux, macOS, and Windows runners.
+
+### Docker action — fully isolated
+
+```yaml
+- uses: W3OSC/depenemy-action/action@v1
+  with:
+    approved-registries: "registry.npmjs.org"
+    fail-on: error
+```
+
+Builds depenemy from the repo source inside a Docker container. Requires a Linux runner. Use this for reproducible, hermetic builds.
+
 ---
 
 ## Inputs
 
 | Input | Description | Required | Default |
 |-------|-------------|----------|---------|
-| `token` | GitHub token for author and contributor lookups (unlocks R001, R006) | No | `${{ github.token }}` |
+| `approved-registries` | Comma-separated list of approved npm registry hostnames. Packages resolved from any other host trigger rule B006 (BLOCK). | No | `registry.npmjs.org` |
+| `token` | GitHub token for author and contributor lookups (unlocks R001, R006, S007–S009) | No | `${{ github.token }}` |
 | `paths` | Space-separated paths to scan | No | `.` |
 | `fail-on` | Minimum severity to fail the action (`error`, `warning`, `info`, `never`) | No | `error` |
 | `output-sarif` | Path to write SARIF output file | No | `depenemy.sarif` |
-| `config` | Path to `.depenemy.yml` config file (overrides `approved-registries`) | No | — |
+| `config` | Path to `.depenemy.yml` config file. When provided, `approved-registries` is ignored. | No | — |
 | `ecosystems` | Comma-separated ecosystems to scan (`npm,pypi,cargo`) | No | auto-detect |
-| `upload-sarif` | Automatically upload SARIF to GitHub Code Scanning | No | `false` |
-| `approved-registries` | Comma-separated approved npm registry hostnames — packages from any other host trigger B006 | No | `registry.npmjs.org` |
+| `upload-sarif` | Automatically upload SARIF to GitHub Code Scanning (requires GHAS) | No | `false` |
 
 ## Outputs
 
@@ -73,62 +98,79 @@ jobs:
 
 ### Behavioral (lockfile integrity)
 
-| ID | Name | Description | Severity |
-|----|------|-------------|----------|
-| B001 | Range specifier | Version uses `^`, `~`, `>=`, `*` | Warning |
-| B002 | No version pinned | No version specified at all | Error |
-| B003 | Lagging version | Pinned version significantly behind latest | Warning |
-| B004 | Lockfile missing | No adjacent lockfile found | Error |
-| B005 | Hash mismatch | Lockfile integrity hash doesn't match resolved tarball | Error |
-| B006 | Unapproved registry | Package resolved from non-approved registry host | Error |
-| B007 | Lockfile injection | Package in lockfile but absent from `package.json` | Error |
+| ID | Name | Severity |
+|----|------|----------|
+| B001 | Range specifier | Warning |
+| B002 | No version pinned | Error |
+| B003 | Lagging version | Warning |
+| **B005** | **Lockfile integrity hash mismatch** (tampered tarball) | **Error** |
+| **B006** | **Package from unapproved registry** | **Error** |
+| **B007** | **Lockfile resolved URL injection** | **Error** |
 
-### Reputation signals
+### Reputation
 
-| ID | Name | Description | Severity |
-|----|------|-------------|----------|
-| R001 | Young author account | GitHub account < 12 months old | Warning |
-| R002 | New package | Published < 6 months ago | Warning |
-| R003 | Low weekly downloads | < 1,000 weekly downloads | Warning |
-| R004 | Low total downloads | < 10,000 total downloads | Warning |
-| R005 | No updates in 2+ years | Last publish > 2 years ago | Warning |
-| R006 | Few contributors | < 5 GitHub contributors | Warning |
-| R007 | Known vulnerable version | Below a known security patch (OSV/CVE) | Error |
-| R008 | Deprecated package | Officially marked as deprecated | Warning |
-| R009 | Typosquatting suspected | Name suspiciously close to a popular package | Warning |
-| R010 | Recently published version | Version published < 7 days ago | Error |
+| ID | Name | Severity |
+|----|------|----------|
+| R001 | Young author account | Warning |
+| R002 | New package | Warning |
+| R003 | Low weekly downloads | Warning |
+| R004 | Low total downloads | Warning |
+| R005 | No updates in 2+ years | Warning |
+| R006 | Few contributors | Warning |
+| R007 | Known vulnerable version | Error |
+| R008 | Deprecated package | Warning |
+| R009 | Typosquatting suspected | Warning |
+| R010 | Recently published version | Error |
 
-### Supply chain risks
+### Supply chain
 
-| ID | Name | Description | Severity |
-|----|------|-------------|----------|
-| S001 | Install scripts | Runs code at install time | Error |
-| S002 | No source repository | No GitHub/GitLab link in metadata | Warning |
-| S003 | Archived repository | Source repo archived or deleted | Warning |
-| S004 | Dependency confusion | Private package name found on public registry | Warning |
-| S005 | Known malicious package | Recorded history of malicious activity | Error |
-| S006 | Missing provenance | No npm provenance attestation | Warning |
-| S007 | Ghost repository | npm points to non-existent GitHub repo | Error |
-| S008 | Bulk publish | Account published unusually many packages in short window | Warning |
-| S009 | Identity mismatch | npm author name/email doesn't match GitHub account | Warning |
+| ID | Name | Severity |
+|----|------|----------|
+| S001 | Install scripts | Error |
+| S002 | No source repository | Warning |
+| S003 | Archived repository | Warning |
+| S004 | Dependency confusion | Warning |
+| S005 | Known malicious package | Error |
+| **S006** | **Missing provenance attestation** | **Warning** |
+| **S007** | **Ghost repository** (facade repo) | **Warning** |
+| **S008** | **Bulk publish burst** | **Warning** |
+| **S009** | **Publisher/GitHub identity mismatch** | **Warning** |
 
-### Composite score
+### Composite
 
-| ID | Name | Description | Severity |
-|----|------|-------------|----------|
-| C001 | Composite attacker score | Weighted combination of S/B signals exceeds threshold | Error |
+| ID | Name | Severity |
+|----|------|----------|
+| **C001** | **Composite supply-chain risk score** (≥4 signals) | **Error** |
+
+---
+
+## Approved registries
+
+The `approved-registries` input controls which npm registry hostnames are trusted. Any package whose `resolved` URL in `package-lock.json` points to a different host triggers **B006** (ERROR) and blocks the build.
+
+```yaml
+# Single registry (default)
+approved-registries: "registry.npmjs.org"
+
+# Multiple registries (comma-separated)
+approved-registries: "registry.npmjs.org, npm.pkg.github.com"
+
+# JSON array
+approved-registries: '["registry.npmjs.org", "artifactory.mycompany.com"]'
+```
+
+When using a private Artifactory/Nexus/Verdaccio proxy, add its hostname to `approved-registries` so internal packages are not incorrectly flagged.
 
 ---
 
 ## Supported ecosystems
 
-- npm / Node.js
+- **npm** / Node.js (full rule set including B005–B007, S006–S009, C001)
 - Python
 - Rust
-- Solidity
 
 ---
 
 ## License
 
-MIT - see [LICENSE](https://github.com/W3OSC/depenemy/blob/main/LICENSE)
+MIT — see [LICENSE](LICENSE)
